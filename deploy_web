@@ -1,0 +1,10 @@
+#!/bin/bash
+
+make
+cp ../alloc.wat ./web/dist
+wasm-pack build --target web
+rm -rf web/pkg
+mv pkg web/
+cd web
+npx webpack
+python3 -m http.server

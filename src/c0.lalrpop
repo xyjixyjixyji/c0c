@@ -1,0 +1,455 @@
+// L1 Compiler
+//! Parser Grammar
+// Author: Miles Conn <mconn@andrew.cmu.edu>
+
+// Initial grammar for L1 
+
+// Grammar 
+grammar<'input>;
+
+use crate::ast::{
+    SurfaceProgram, SurfaceGdecl, SurfaceFdefn, SurfaceStmt, Fdecl, Sdecl, Sdefn, Typedef,
+    Param, ParamList, ReturnType, Stmts, Arg, ArgList,
+    Expr, BinOp, UnOp, PostOp, Typ, AsnOp
+};
+use lalrpop_util::ParseError;
+use crate::lex::{Token, LexerState};
+
+use std::str::FromStr;
+
+extern {
+    type Location = usize;
+    type Error = String;
+
+    enum Token<'input> {
+        "int" => Token::Int,
+        "bool" => Token::Bool,
+        "void" => Token::Void,
+        "true" => Token::TRUE,
+        "false" => Token::FALSE,
+        ";" => Token::Semicolon,
+        "," => Token::COMMA,
+
+        // BinOp
+        "+" => Token::Plus,
+        "-" => Token::Minus,
+        "*" => Token::Asterisk,
+        "/" => Token::Div,
+        "%" => Token::Mod,
+        "<" => Token::LessThan,
+        "<=" => Token::Leq,
+        ">" => Token::GreaterThan,
+        ">=" => Token::Geq,
+        "==" => Token::Eq,
+        "!=" => Token::Neq,
+        "&&" => Token::And,
+        "||" => Token::Or,
+        "&" => Token::BitAnd,
+        "^" => Token::BitXor,
+        "|" => Token::BitOr,
+        "<<" => Token::Shl,
+        ">>" => Token::Shr,
+
+        // UnOp
+        "!" => Token::Not,
+        "~" => Token::BitNot,
+
+        // PostOp
+        "++" => Token::PlusPlus,
+        "--" => Token::MinusMinus,
+
+        // AsnOp
+        "=" => Token::Assgn,
+        "+=" => Token::PlusEq,
+        "-=" => Token::MinusEq,
+        "*=" => Token::TimesEq,
+        "/=" => Token::DivEq,
+        "%=" => Token::ModEq,
+        "&=" => Token::AndEq,
+        "|=" => Token::OrEq,
+        "^=" => Token::XorEq,
+        "<<=" => Token::ShlEq,
+        ">>=" => Token::ShrEq,
+
+        // Ternary
+        "?" => Token::QuestionMark,
+        ":" => Token::Colon,
+        
+        // control
+        "return" => Token::Return,
+        "if" => Token::IF,
+        "else" => Token::ELSE,
+        "while" => Token::WHILE,
+        "for" => Token::FOR,
+        "assert" => Token::ASSERT,
+
+        "struct" => Token::Struct,
+        "typedef" => Token::Typedef,
+        "ident" => Token::Ident(<&'input str>),
+        "declaredident" => Token::DeclaredIdent(<&'input str>),
+        "number" => Token::Number(i64),
+        "{" => Token::LBrace,
+        "}" => Token::RBrace,
+        "(" => Token::LParen,
+        ")" => Token::RParen,
+        "[" => Token::LBracket,
+        "]" => Token::RBracket,
+        "." => Token::FieldSelect,
+        "->" => Token::FieldDeref,
+        "alloc" => Token::ALLOC,
+        "alloc_array" => Token::ALLOC_ARRAY,
+        "NULL" => Token::NULL,
+    }
+}
+
+pub SurfaceProgram: SurfaceProgram = {
+    <decls:SurfaceGdecl*> => decls,
+};
+
+SurfaceGdecl: SurfaceGdecl = {
+    <fdecl:Fdecl> => SurfaceGdecl::Fdecl(fdecl),
+    <fdefn:SurfaceFdefn> => SurfaceGdecl::Fdefn(fdefn),
+    <typedef:Typedef> => SurfaceGdecl::Typedef(typedef),
+    <sdecl:Sdecl> => SurfaceGdecl::Sdecl(sdecl),
+    <sdefn:Sdefn> => SurfaceGdecl::Sdefn(sdefn),
+}
+
+Fdecl: Fdecl = {
+    <r:ReturnType> <i:Ident> <p:ParamList> ";" => {
+        Fdecl {ret_type: r, func_name: i, param_list: p}
+    }
+}
+
+Sdecl: Sdecl = {
+    "struct" <i:AllIdent> ";" => {
+        Sdecl {struct_name: i}
+    }
+}
+
+Sdefn: Sdefn = {
+    "struct" <i:AllIdent> "{" <f:FieldList> "}" ";" => {
+        Sdefn {struct_name: i, field_list: f}
+    }
+}
+
+SurfaceFdefn: SurfaceFdefn = {
+    <r:ReturnType> <i:Ident> <p:ParamList> <b:Block> => {
+        SurfaceFdefn {ret_type: r, func_name: i, param_list: p, body: b}
+    }
+}
+
+Typedef: Typedef = {
+    "typedef" <t:Typ> <i:AllIdent> ";" => Typedef {orig_type: t, new_type_name: i},
+}
+
+ReturnType: ReturnType = {
+    "void" => ReturnType::Void,
+    <Typ> => ReturnType::Type(<>),
+}
+
+ParamListFollow: ParamList = {
+    => ParamList(vec![]),
+    "," <param:Param> <params:ParamListFollow> => {
+        let mut new_params = vec![param];
+        new_params.extend(params.0);
+        ParamList(new_params)
+    }
+}
+
+ParamList: ParamList = {
+    "(" ")" => ParamList(vec![]),
+    "(" <param:Param> <params:ParamListFollow> ")" => {
+        let mut new_params = vec![param];
+        new_params.extend(params.0);
+        ParamList(new_params)
+    }
+}
+
+Param: Param = {
+    <t:Typ> <i:AllIdent> => (t, i),
+}
+
+FieldList: ParamList = {
+    => ParamList(vec![]),
+    <f:Param> ";" <fields:FieldList> => {
+        let mut new_fields = vec![f];
+        new_fields.extend(fields.0);
+        ParamList(new_fields)
+    },
+}
+
+Block: SurfaceStmt = {
+    "{" <Stmts> "}" => SurfaceStmt::Block(<>),
+}
+
+Stmts: Vec<SurfaceStmt> = {
+    => vec![], // Handle an empty sequence of statements
+    <stmt:SurfaceStmt> <rest:Stmts> => {
+        let mut all_stmts = vec![stmt];
+        all_stmts.extend(rest);
+        all_stmts
+    },
+}
+
+SurfaceStmt: SurfaceStmt = {
+    <OpenStmt> => <>,
+    <ClosedStmt> => <>,
+}
+
+// We need to separate OpenStmt with ClosedStmt in order to eliminate the dangling else ambiguity
+// see https://en.wikipedia.org/wiki/Dangling_else
+OpenStmt: SurfaceStmt = {
+    "if" "(" <e:Expr> ")" <s1:ClosedStmt> => SurfaceStmt::If(e,Box::new(s1), Option::None),
+    "if" "(" <e:Expr> ")" <s1:OpenStmt> => SurfaceStmt::If(e,Box::new(s1), Option::None),
+    "if" "(" <e:Expr> ")" <s1:ClosedStmt> "else" <s2:OpenStmt> => SurfaceStmt::If(e,Box::new(s1), Option::Some(Box::new(s2))),
+    "while" "("  <e:Expr> ")" <s:OpenStmt> => SurfaceStmt::While(e,Box::new(s)),
+    "for" "(" <s1:SimpOpt> ";" <e:Expr> ";" <s2:SimpOpt> ")" <s3:OpenStmt> => SurfaceStmt::For(s1, e, s2, Box::new(s3)),
+}
+
+ClosedStmt: SurfaceStmt = {
+    <SimpStmt> => <>,
+    <Block> => <>,
+    "if" "(" <e:Expr> ")" <s1:ClosedStmt> "else" <s2:ClosedStmt> => SurfaceStmt::If(e,Box::new(s1), Option::Some(Box::new(s2))),
+    "while" "("  <e:Expr> ")" <s:ClosedStmt> => SurfaceStmt::While(e,Box::new(s)),
+    "for" "(" <s1:SimpOpt> ";" <e:Expr> ";" <s2:SimpOpt> ")" <s3:ClosedStmt> => SurfaceStmt::For(s1, e, s2, Box::new(s3)),
+}
+
+SimpStmt: SurfaceStmt = {
+    <Simp> ";" => <>,
+    "return" <e:Expr?> ";" => SurfaceStmt::Ret(e),
+    "assert" "(" <e:Expr> ")" ";" => SurfaceStmt::Assert(e),
+}
+
+SimpOpt: Option<Box<SurfaceStmt>> = {
+    => Option::None,
+    <Simp> => Option::Some(Box::new(<>)),
+}
+
+Simp: SurfaceStmt = {
+    <t:Typ> <v:Ident> => SurfaceStmt::Decl(t, v, None),
+    <t:Typ> <v:Ident> "=" <e:Expr> => SurfaceStmt::Decl(t, v, Some(e)),
+    <l:SubExp> <o:AsnOp> <e:Expr> => SurfaceStmt::Asgn(l, o, e), // lvalue is the l, we are using SubExp to avoid ambiguity
+    <Expr> => SurfaceStmt::Expr(<>),
+}
+
+Arg: Arg = {
+    <e:Expr> => e,
+}
+
+ArgList: ArgList = {
+    "(" ")" => ArgList(vec![]),
+    "(" <e:Expr> <a:ArgListFollow> ")" => {
+        let mut args = vec![e];
+        args.extend(a.0);
+        ArgList(args)
+    },
+}
+
+ArgListFollow: ArgList = {
+    => ArgList(vec![]),
+    "," <e:Expr> <a:ArgListFollow> => {
+        let mut args = vec![e];
+        args.extend(a.0);
+        ArgList(args)
+    },
+}
+
+Expr: Expr = {
+    <BasicExpr> => <>,
+    <TernaryExpr> => <>,
+}
+
+FunctionCall: Expr = {
+    <f:Ident> <a:ArgList> => Expr::FunctionCall(f, a),
+    "alloc_array" "(" <t:Typ> "," <e:Expr> ")" => Expr::AllocArray(t, Box::new(e)),
+    "alloc" "(" <t:Typ> ")" => Expr::Alloc(t),
+}
+
+TernaryExpr: Expr = {
+    <e1:BasicExpr> "?" <e2:Expr> ":" <e3:Expr> => Expr::Ternary(Box::new(e1), Box::new(e2), Box::new(e3)),
+}
+
+SubExp: Expr = {
+    #[precedence(level="0")]
+    "NULL" => Expr::Null,
+    #[precedence(level="0")]
+    <n:Number> => Expr::Number(n as i32),
+    #[precedence(level="0")]
+    <v:Ident> => Expr::Variable(v),
+    #[precedence(level="0")]
+    "true" => Expr::True,
+    #[precedence(level="0")]
+    "false" => Expr::False,
+    #[precedence(level="0")]
+    "(" <Expr> ")" => <>,
+    #[precedence(level="0")]
+    <FunctionCall> => <>,
+    #[precedence(level="0")]
+    <e:SubExp> "." <v:AllIdent> => Expr::StructAccess(Box::new(e), v, Box::new(Typ::Null)),
+    #[precedence(level="0")]
+    <e:SubExp> "->" <v:AllIdent> => Expr::StructDeref(Box::new(e), v, Box::new(Typ::Null)),
+    #[precedence(level="0")]
+    <e1:SubExp> "[" <e2:Expr> "]" => Expr::ArrayAccess(Box::new(e1), Box::new(e2), Box::new(Typ::Null)),
+    #[precedence(level="1")]
+    <v:SubExp> <o:PostOp> => Expr::PostOp(Box::new(v), o),
+    #[precedence(level="2")]
+    "*" <e:SubExp> => Expr::PointerDeref(Box::new(e), Box::new(Typ::Null)),
+}
+
+BasicExpr: Expr = {
+    #[precedence(level="0")]
+    SubExp => <>,
+
+    #[precedence(level="1")]
+    #[assoc(side="right")]
+    <o:UnOp> <e:BasicExpr> => match (o,&e) {
+        // Neg
+        (UnOp::Neg, Expr::Number(a)) => Expr::Number((-1 * (*a as i64)) as i32),
+        // Not
+        (UnOp::Not, Expr::True) => Expr::False,
+        (UnOp::Not, Expr::False) => Expr::True,
+        // BitNot
+        (UnOp::BitNot, Expr::Number(a)) => Expr::Number((!a) as i32),
+        _ => Expr::Unop(o, Box::new(e)),
+    },
+
+    #[precedence(level="2")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order0BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="3")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order1BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="4")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order2BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="5")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order3BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="6")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order4BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="7")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order5BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="8")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order6BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="9")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order7BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="10")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order8BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+
+    #[precedence(level="11")]
+    #[assoc(side="left")]
+    <l:BasicExpr> <o:Order9BinOp> <r:BasicExpr> => Expr::Binop(Box::new(l), o, Box::new(r)),
+};
+
+
+Typ: Typ = {
+    "int" => Typ::Int,
+    "bool" => Typ::Bool,
+    "struct" <i:AllIdent> => Typ::Struct(i),
+    <i:DeclaredIdent> => Typ::Custom(i),
+    <t:Typ> "*" => Typ::Pointer(Box::new(t)),
+    <t:Typ> "[" "]" => Typ::Array(Box::new(t)),
+};
+
+UnOp: UnOp = {
+    "!" => UnOp::Not,
+    "~" => UnOp::BitNot,
+    "-" => UnOp::Neg,
+};
+
+PostOp: PostOp = {
+    "++" => PostOp::Inc,
+    "--" => PostOp::Dec,
+}
+
+Order0BinOp : BinOp = {
+    "*" => BinOp::Mul,
+    "/" => BinOp::Div,
+    "%" => BinOp::Mod,
+}
+
+Order1BinOp : BinOp = {
+    "+" => BinOp::Add,
+    "-" => BinOp::Sub,
+}
+
+Order2BinOp: BinOp = {
+    "<<" => BinOp::Shl,
+    ">>" => BinOp::Shr,
+}
+
+Order3BinOp: BinOp = {
+    "<" => BinOp::LessThan,
+    ">" => BinOp::GreaterThan,
+    "<=" => BinOp::Leq,
+    ">=" => BinOp::Geq,
+}
+
+Order4BinOp: BinOp = {
+    "==" => BinOp::EqEq,
+    "!=" => BinOp::Uneq,
+}
+
+Order5BinOp: BinOp = {
+    "&" => BinOp::BitAnd,
+}
+
+Order6BinOp: BinOp = {
+    "^" => BinOp::BitXor,
+}
+
+Order7BinOp: BinOp = {
+    "|" => BinOp::BitOr,
+}
+
+Order8BinOp: BinOp = {
+    "&&" => BinOp::LogicalAnd,
+}
+
+Order9BinOp: BinOp = {
+    "||" => BinOp::LogicalOr,
+}
+
+AsnOp: AsnOp = {
+    "="  => AsnOp::Eq,
+    "+=" => AsnOp::PlusEq,
+    "-=" => AsnOp::MinusEq,
+    "*=" => AsnOp::TimesEq,
+    "/=" => AsnOp::DivEq,
+    "%=" => AsnOp::ModEq,
+    "&=" => AsnOp::AndEq,
+    "^=" => AsnOp::XorEq,
+    "|=" => AsnOp::OrEq,
+    "<<=" => AsnOp::ShlEq,
+    ">>=" => AsnOp::ShrEq,
+}
+
+AllIdent: String = {
+    <Ident> => <>,
+    <DeclaredIdent> => <>,
+}
+
+Ident: String = {
+    <i: "ident"> => i.to_owned(),
+}
+
+DeclaredIdent: String = {
+    <i: "declaredident"> => i.to_owned(),
+}
+
+Number: i64 = {
+    <n: "number"> => n.into_number().unwrap(),
+}

@@ -1,0 +1,12 @@
+# only tco is enabled
+tco = true
+strength_reduction = true
+inline = true
+peephole_const_prop = true
+peephole_copy_prop = true
+peephole_rewrite_condjmp = true
+peephole_rem_null_seq = true
+dead_code_elim = true
+mcs_heuristic = true
+prespilling = true
+coaleacing = true
